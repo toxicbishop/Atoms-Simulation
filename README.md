@@ -2,8 +2,6 @@
 
 Here is the raw code for the atom simulation, includes raytracer version, realtime runner, and 2D version
 
-web version: [kavang.com/atom](https://www.kavang.com/atom)
-
 What the model does:
 
 1. Takes the quantum numbers (n, l, m) that describe an orbital's shape
@@ -23,7 +21,7 @@ What the model does:
 ### Build Instructions
 
 1. Clone the repository:
-    * `git clone https://github.com/kavan010/Atoms.git`
+    * `git clone https://github.com/toxicbishop/Atoms-Simulation.git`
 
 2. CD into the newly cloned directory
     * `cd ./Atoms`
