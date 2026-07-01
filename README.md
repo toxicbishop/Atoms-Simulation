@@ -85,3 +85,7 @@ The core logic relies on sampling the Schrödinger equation for Hydrogen to dete
 * `atom.cpp`: 2D logic.
 * `atom_realtime.cpp`: 3D OpenGL implementation.
 * `atom_excitation.cpp`: Logic for energy absorption and state transitions.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
