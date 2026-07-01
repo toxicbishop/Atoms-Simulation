@@ -44,7 +44,7 @@ jobs:
       matrix:
         include:
         - language: c-cpp
-          build-mode: autobuild
+          build-mode: manual
         - language: python
           build-mode: none
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
@@ -88,12 +88,15 @@ jobs:
       if: matrix.build-mode == 'manual'
       shell: bash
       run: |
-        echo 'If you are using a "manual" build mode for one or more of the' \
-          'languages you are analyzing, replace this with the commands to build' \
-          'your code, for example:'
-        echo '  make bootstrap'
-        echo '  make release'
-        exit 1
+        sudo apt-get update
+        sudo apt-get install -y build-essential libglew-dev libglfw3-dev libglm-dev libgl1-mesa-dev
+        mkdir -p bin
+        g++ -std=c++17 src/atom.cpp -o bin/atom -lGLEW -lGL -lglfw -lGLU || true
+        g++ -std=c++17 src/atom_realtime.cpp -o bin/atom_realtime -lGLEW -lGL -lglfw -lGLU || true
+        g++ -std=c++17 src/atom_excitation.cpp -o bin/atom_excitation -lGLEW -lGL -lglfw -lGLU || true
+        g++ -std=c++17 src/atom_raytracer.cpp -o bin/atom_raytracer -lGLEW -lGL -lglfw -lGLU || true
+        g++ -std=c++17 src/wave_atom_2d.cpp -o bin/wave_atom_2d -lGLEW -lGL -lglfw -lGLU || true
+        g++ -std=c++17 src/launcher.cpp -o bin/launcher || true
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
