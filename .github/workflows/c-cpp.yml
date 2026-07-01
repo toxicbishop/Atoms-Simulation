@@ -13,11 +13,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: configure
-      run: ./configure
-    - name: make
-      run: make
-    - name: make check
-      run: make check
-    - name: make distcheck
-      run: make distcheck
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libglew-dev libglfw3-dev libglm-dev libgl1-mesa-dev
+    - name: Build
+      run: |
+        mkdir -p bin
+        g++ -std=c++17 src/atom.cpp -o bin/atom -lGLEW -lGL -lglfw -lGLU
+        g++ -std=c++17 src/atom_realtime.cpp -o bin/atom_realtime -lGLEW -lGL -lglfw -lGLU
+        g++ -std=c++17 src/atom_excitation.cpp -o bin/atom_excitation -lGLEW -lGL -lglfw -lGLU
+        g++ -std=c++17 src/atom_raytracer.cpp -o bin/atom_raytracer -lGLEW -lGL -lglfw -lGLU
+        g++ -std=c++17 src/wave_atom_2d.cpp -o bin/wave_atom_2d -lGLEW -lGL -lglfw -lGLU
+        g++ -std=c++17 src/launcher.cpp -o bin/launcher
