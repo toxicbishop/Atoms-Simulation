@@ -1,2 +1,5 @@
 #————VScode——————————————————————
 .vscode/
+bin/
+z_saves/
+build/
