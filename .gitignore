@@ -1,5 +1,13 @@
-#————VScode——————————————————————
-.vscode/
-bin/
-z_saves/
+# Build artifacts
 build/
+bin/
+
+# IDE
+.vscode/
+
+# Dead/archived data
+z_saves/
+
+# OS files
+.DS_Store
+Thumbs.db

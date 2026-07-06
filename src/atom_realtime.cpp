@@ -1,6 +1,5 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
-#include <GL/glu.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -15,6 +14,9 @@
 #include <fstream>
 #include <complex>
 #include <random>
+
+#include "orbital_math.h"
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -23,264 +25,45 @@ using namespace std;
 
 // ================= Constants ================= //
 const float a0 = 1;
-float electron_r = 1.5f; // Will be used as radius for ray-traced spheres
-const double hbar = 1;
-const double m_e = 1;
 const double zmSpeed = 10.0;
 
-// --- Global quantum numbers (make accessible to callbacks/main loop)
-int n = 2, l = 1, m = 0, N = 100000;
-
-// ================= Physics Sampling ================= //
+// ================= Simulation State ================= //
 struct Particle {
     vec3 pos;
     vec3 vel = vec3(0.0f);
     vec4 color;
     Particle(vec3 p, vec4 c = vec4(0.0f, 0.5f, 1.0f, 1.0f)) : pos(p), color(c){}
 };
-vector<Particle> particles;
 
-// --- random devices ---
-random_device rd; mt19937 gen(rd()); uniform_real_distribution<float> dis(0.0f, 1.0f);
+struct AppState {
+    orbital::SimulationState sim;
+    vector<Particle> particles;
+    float electron_r = 1.5f;
+};
 
-// --- sample R ---
-double sampleR(int n, int l, mt19937& gen) {
-    const int N = 4096;
-    //const double a0 = 1.0;
-    const double rMax = 10.0 * n * n * a0;
+// ================= Particle Generation ================= //
+vec3 toGlmVec3(orbital::Vec3 v) { return vec3(v.x, v.y, v.z); }
 
-    static vector<double> cdf;
-    static bool built = false;
+vec4 toGlmColor(orbital::Color4 c) { return vec4(c.r, c.g, c.b, c.a); }
 
-    if (!built) {
-        cdf.resize(N);
-        double dr = rMax / (N - 1);
-        double sum = 0.0;
+void generateParticles(AppState& state) {
+    state.particles.clear();
+    auto& sim = state.sim;
+    for (int i = 0; i < sim.particle_count; ++i) {
+        float r = static_cast<float>(sim.radial_sampler.sample(sim.n, sim.l, sim.rng, a0));
+        float theta = static_cast<float>(sim.theta_sampler.sample(sim.l, sim.m, sim.rng));
+        float phi = static_cast<float>(orbital::sample_phi(sim.rng));
+        vec3 pos = toGlmVec3(orbital::spherical_to_cartesian(r, theta, phi));
 
-        for (int i = 0; i < N; ++i) {
-            double r = i * dr;
-            double rho = 2.0 * r / (n * a0);
-
-            // Associated Laguerre L_{n-l-1}^{2l+1}(rho)
-            int k = n - l - 1;
-            int alpha = 2 * l + 1;
-
-            double L = 1.0, Lm1 = 1.0 + alpha - rho;
-            if (k == 1) L = Lm1;
-            else if (k > 1) {
-                double Lm2 = 1.0;
-                for (int j = 2; j <= k; ++j) {
-                    L = ((2*j - 1 + alpha - rho) * Lm1 -
-                         (j - 1 + alpha) * Lm2) / j;
-                    Lm2 = Lm1;
-                    Lm1 = L;
-                }
-            }
-
-            double norm = pow(2.0 / (n * a0), 3) * tgamma(n - l) / (2.0 * n * tgamma(n + l + 1));
-            double R = sqrt(norm) * exp(-rho / 2.0) * pow(rho, l) * L;
-
-            double pdf = r * r * R * R;
-            sum += pdf;
-            cdf[i] = sum;
-        }
-
-        for (double& v : cdf) v /= sum;
-        built = true;
+        float len = length(pos);
+        double ptheta = acos(pos.y / len);
+        orbital::Color4 col = orbital::orbital_color(len, ptheta, sim.n, sim.l, sim.m,
+                                                     1.5f * static_cast<float>(pow(5, sim.n)), a0);
+        state.particles.emplace_back(pos, toGlmColor(col));
     }
-
-    uniform_real_distribution<double> dis(0.0, 1.0);
-    double u = dis(gen);
-
-    int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
-    return idx * (rMax / (N - 1));
-}
-// --- sample Theta ---
-double sampleTheta(int l, int m, mt19937& gen) {
-    const int N = 2048;
-    static vector<double> cdf;
-    static bool built = false;
-
-    if (!built) {
-        cdf.resize(N);
-        double dtheta = M_PI / (N - 1);
-        double sum = 0.0;
-
-        for (int i = 0; i < N; ++i) {
-            double theta = i * dtheta;
-            double x = cos(theta);
-
-            // Associated Legendre P_l^m(x)
-            double Pmm = 1.0;
-            if (m > 0) {
-                double somx2 = sqrt((1.0 - x) * (1.0 + x));
-                double fact = 1.0;
-                for (int j = 1; j <= m; ++j) {
-                    Pmm *= -fact * somx2;
-                    fact += 2.0;
-                }
-            }
-
-            double Plm;
-            if (l == m) {
-                Plm = Pmm;
-            } else {
-                double Pm1m = x * (2 * m + 1) * Pmm;
-                if (l == m + 1) {
-                    Plm = Pm1m;
-                } else {
-                    double Pll;
-                    for (int ll = m + 2; ll <= l; ++ll) {
-                        Pll = ((2 * ll - 1) * x * Pm1m -
-                               (ll + m - 1) * Pmm) / (ll - m);
-                        Pmm = Pm1m;
-                        Pm1m = Pll;
-                    }
-                    Plm = Pm1m;
-                }
-            }
-
-            double pdf = sin(theta) * Plm * Plm;
-            sum += pdf;
-            cdf[i] = sum;
-        }
-
-        for (double& v : cdf) v /= sum;
-        built = true;
-    }
-
-    uniform_real_distribution<double> dis(0.0, 1.0);
-    double u = dis(gen);
-
-    int idx = lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin();
-    return idx * (M_PI / (N - 1));
-}
-// --- sample Phi (uniform) ---
-float samplePhi(float n, float l, float m) {
-    return 2.0f * M_PI * dis(gen);
-}
-// --- calculate prob current ---
-vec3 calculateProbabilityFlow(Particle& p, int n, int l, int m) {
-    double r = length(p.pos);   if (r < 1e-6) return vec3(0.0f);
-    double theta = acos(p.pos.y / r); 
-    double phi = atan2(p.pos.z, p.pos.x); 
-
-
-    //Compute magnitude
-    double sinTheta = sin(theta);  if (abs(sinTheta) < 1e-4) sinTheta = 1e-4;
-    double v_mag = hbar * m / (m_e * r * sinTheta);
-
-    //Convert to Cartesian
-    double vx = -v_mag * sin(phi);
-    double vy = 0.0; 
-    double vz =  v_mag * cos(phi);
-
-    return vec3((float)vx, (float)vy, (float)vz);
 }
 
-vec4 heatmap_fire(float value) {
-    // Ensure value is clamped between 0 and 1
-    value = std::max(0.0f, std::min(1.0f, value));
-
-    // Define color stops for the "Heat/Fire" pattern
-    // Order: Black -> Dark Purple -> Red -> Orange -> Yellow -> White
-    const int num_stops = 6;
-    vec4 colors[num_stops] = {
-        {0.0f, 0.0f, 0.0f, 1.0f}, // 0.0: Black
-        {0.5f, 0.0f, 0.99f, 1.0f}, // 0.2: Dark Purple
-        {0.8f, 0.0f, 0.0f, 1.0f}, // 0.4: Deep Red
-        {1.0f, 0.5f, 0.0f, 1.0f}, // 0.6: Orange
-        {1.0f, 1.0f, 0.0f, 1.0f}, // 0.8: Yellow
-        {1.0f, 1.0f, 1.0f, 1.0f}  // 1.0: White
-    };
-
-    // Find which segment the value falls into
-    float scaled_v = value * (num_stops - 1);
-    int i = static_cast<int>(scaled_v);
-    int next_i = std::min(i + 1, num_stops - 1);
-    
-    // Calculate how far we are between stop 'i' and 'next_i'
-    float local_t = scaled_v - i;
-
-    // Linearly interpolate between the two colors
-    vec4 result;
-    result.r = colors[i].r + local_t * (colors[next_i].r - colors[i].r);
-    result.g = colors[i].g + local_t * (colors[next_i].g - colors[i].g);
-    result.b = colors[i].b + local_t * (colors[next_i].b - colors[i].b);
-    result.a = 1.0f; // Solid opacity
-
-    return result;
-}
-vec4 inferno(double r, double theta, double phi, int n, int l, int m) {
-    // --- radial part |R(r)|^2 ---
-    double rho = 2.0 * r / (n * a0);
-
-    int k = n - l - 1;
-    int alpha = 2 * l + 1;
-
-    double L = 1.0;
-    if (k == 1) {
-        L = 1.0 + alpha - rho;
-    } else if (k > 1) {
-        double Lm2 = 1.0;
-        double Lm1 = 1.0 + alpha - rho;
-        for (int j = 2; j <= k; ++j) {
-            L = ((2*j - 1 + alpha - rho) * Lm1 -
-                 (j - 1 + alpha) * Lm2) / j;
-            Lm2 = Lm1;
-            Lm1 = L;
-        }
-    }
-
-    double norm = pow(2.0 / (n * a0), 3)
-                * tgamma(n - l)
-                / (2.0 * n * tgamma(n + l + 1));
-
-    double R = sqrt(norm) * exp(-rho / 2.0) * pow(rho, l) * L;
-    double radial = R * R;
-
-    // --- angular part |P_l^m(cosθ)|^2 ---
-    double x = cos(theta);
-
-    double Pmm = 1.0;
-    if (m > 0) {
-        double somx2 = sqrt((1.0 - x) * (1.0 + x));
-        double fact = 1.0;
-        for (int j = 1; j <= m; ++j) {
-            Pmm *= -fact * somx2;
-            fact += 2.0;
-        }
-    }
-
-    double Plm;
-    if (l == m) {
-        Plm = Pmm;
-    } else {
-        double Pm1m = x * (2*m + 1) * Pmm;
-        if (l == m + 1) {
-            Plm = Pm1m;
-        } else {
-            for (int ll = m + 2; ll <= l; ++ll) {
-                double Pll = ((2*ll - 1) * x * Pm1m -
-                              (ll + m - 1) * Pmm) / (ll - m);
-                Pmm = Pm1m;
-                Pm1m = Pll;
-            }
-            Plm = Pm1m;
-        }
-    }
-
-    double angular = Plm * Plm;
-
-    double intensity = radial * angular;
-
-    //cout << "intensity: " << intensity << endl;
-
-    return heatmap_fire(intensity * 1.5 * pow(5, n)); // Scale for better color mapping
-}
-
-
-// ================= Raytracer ================= //
+// ================= Camera ================= //
 struct Camera {
     vec3 target = vec3(0.0f, 0.0f, 0.0f);
     float radius = 50.0f;
@@ -294,7 +77,7 @@ struct Camera {
     double lastX = 0.0, lastY = 0.0;
 
     vec3 position() const {
-        float clampedElevation = clamp(elevation, 0.01f, float(M_PI) - 0.01f);
+        float clampedElevation = glm::clamp(elevation, 0.01f, float(M_PI) - 0.01f);
         return vec3(
             radius * sin(clampedElevation) * cos(azimuth),
             radius * cos(clampedElevation),
@@ -333,37 +116,21 @@ struct Camera {
         update();
     };
 };
-Camera camera;
-vec3 sphericalToCartesian(float r, float theta, float phi){
-        float x = r * sin(theta) * cos(phi);
-        float y = r * cos(theta);
-        float z = r * sin(theta) * sin(phi);
-        return vec3(x, y, z);
-    }
-void generateParticles(int N) {
-    particles.clear();
-    for (int i = 0; i < N; ++i) {
-        // --- get x, y, z, positions
-        vec3 pos = sphericalToCartesian(
-            sampleR(n, l, gen), 
-            sampleTheta(l, m, gen), 
-            samplePhi(n, l, m)
-        );
-        // --- color & add particle ---
-        float r = length(pos);
-        double theta = acos(pos.y / r);
-        double phi = atan2(pos.z, pos.x);
-        vec4 col = inferno(r, theta, phi, n, l, m) ;
-        particles.emplace_back(pos, col);
-    }
-}
 
+// ================= Combined Window State ================= //
+// Passed to GLFW callbacks via glfwSetWindowUserPointer.
+struct WindowState {
+    Camera camera;
+    AppState* app;
+};
+
+// ================= Engine ================= //
 struct Engine {
     GLFWwindow* window;
     int WIDTH = 800;
     int HEIGHT = 600;
 
-    // Raytracing vals
+    // Rendering resources
     GLuint sphereVAO, sphereVBO;
     int sphereVertexCount;
     GLuint shaderProgram;
@@ -438,12 +205,7 @@ struct Engine {
         projLoc  = glGetUniformLocation(shaderProgram, "projection");
         colorLoc = glGetUniformLocation(shaderProgram, "objectColor");
     }
-    vec3 sphericalToCartesian(float r, float theta, float phi){
-        float x = r * sin(theta) * cos(phi);
-        float y = r * cos(theta);
-        float z = r * sin(theta) * sin(phi);
-        return vec3(x, y, z);
-    }
+
     void CreateVBOVAO(GLuint& VAO, GLuint& VBO, const vector<float>& vertices) {
         glGenVertexArrays(1, &VAO);
         glGenBuffers(1, &VBO);
@@ -465,9 +227,9 @@ struct Engine {
         glEnableVertexAttribArray(0);
         glBindVertexArray(0);
     }
-    void drawSpheres(vector<Particle>& particles) {
+    void drawSpheres(const Camera& camera, vector<Particle>& particles, float electron_r) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glUseProgram(shaderProgram); // Use our new shaded system
+        glUseProgram(shaderProgram);
 
         mat4 projection = perspective(radians(45.0f), 800.0f/600.0f, 0.1f, 2000.0f);
         mat4 view = lookAt(camera.position(), camera.target, vec3(0, 1, 0)); 
@@ -488,79 +250,72 @@ struct Engine {
             glDrawArrays(GL_TRIANGLES, 0, sphereVertexCount);
         }
     }
-    void setupCameraCallbacks() {
-        glfwSetWindowUserPointer(window, &camera);
+    void setupCallbacks(WindowState* ws) {
+        glfwSetWindowUserPointer(window, ws);
         glfwSetMouseButtonCallback(window, [](GLFWwindow* win, int button, int action, int mods) {
-            ((Camera*)glfwGetWindowUserPointer(win))->processMouseButton(button, action, mods, win);
+            auto* ws = static_cast<WindowState*>(glfwGetWindowUserPointer(win));
+            ws->camera.processMouseButton(button, action, mods, win);
         });
         glfwSetCursorPosCallback(window, [](GLFWwindow* win, double x, double y) {
-            ((Camera*)glfwGetWindowUserPointer(win))->processMouseMove(x, y);
+            auto* ws = static_cast<WindowState*>(glfwGetWindowUserPointer(win));
+            ws->camera.processMouseMove(x, y);
         });
         glfwSetScrollCallback(window, [](GLFWwindow* win, double xoffset, double yoffset) {
-            ((Camera*)glfwGetWindowUserPointer(win))->processScroll(xoffset, yoffset);
+            auto* ws = static_cast<WindowState*>(glfwGetWindowUserPointer(win));
+            ws->camera.processScroll(xoffset, yoffset);
         });
-        // Key callback: modify global quantum numbers
+        // Key callback: modify quantum numbers via SimulationState
         glfwSetKeyCallback(window, [](GLFWwindow* win, int key, int scancode, int action, int mods) {
             if (!(action == GLFW_PRESS || action == GLFW_REPEAT)) return;
+            auto* ws = static_cast<WindowState*>(glfwGetWindowUserPointer(win));
+            auto& sim = ws->app->sim;
 
             if (key == GLFW_KEY_W) {
-                n += 1;
-                generateParticles(N);
+                sim.n += 1;
             } else if (key == GLFW_KEY_S) {
-                n -= 1;
-                if (n < 1) n = 1;
-                generateParticles(N);
+                sim.n -= 1;
             } else if (key == GLFW_KEY_E) {
-                l += 1;
-                generateParticles(N);
+                sim.l += 1;
             } else if (key == GLFW_KEY_D) {
-                l -= 1;
-                if (l < 0) l = 0;
-                generateParticles(N);
+                sim.l -= 1;
             } else if (key == GLFW_KEY_R) {
-                m += 1;
-                generateParticles(N);
+                sim.m += 1;
             } else if (key == GLFW_KEY_F) {
-                m -= 1;
-                generateParticles(N);
+                sim.m -= 1;
             } else if (key == GLFW_KEY_T) {
-                N +=100000;
-                generateParticles(N);
+                sim.particle_count += 100000;
             } else if (key == GLFW_KEY_G) {
-                N -=100000;
-                generateParticles(N);
+                sim.particle_count -= 100000;
             }
 
-            // Clamp to valid ranges
-            if (l > n - 1) l = n - 1;
-            if (l < 0) l = 0;
-            if (m > l) m = l;
-            if (m < -l) m = -l;
-
-            electron_r = float(n) / 3.0f;
-            cout << "Quantum numbers updated: n=" << n << " l=" << l << " m=" << m << " N=" << N << "\n";
+            sim.clamp_quantum_numbers();
+            ws->app->electron_r = float(sim.n) / 3.0f;
+            generateParticles(*ws->app);
+            cout << "Quantum numbers updated: n=" << sim.n << " l=" << sim.l
+                 << " m=" << sim.m << " N=" << sim.particle_count << "\n";
         });
     }
 };
-Engine engine;
 
+// ================= Grid ================= //
 struct Grid {
     GLuint gridVAO, gridVBO;
     vector<float> vertices;
-    Grid() {
+
+    void init(Engine& engine) {
         vertices = CreateGridVertices(500.0f, 2);
         engine.CreateVBOVAO(gridVAO, gridVBO, vertices.data(), vertices.size());
     }
-    void Draw (GLint objectColorLoc) {
+    void Draw(Engine& engine) {
         glUseProgram(engine.shaderProgram);
-        glUniform4f(objectColorLoc, 1.0f, 1.0f, 1.0f, 0.5f);
+        glUniform4f(engine.colorLoc, 1.0f, 1.0f, 1.0f, 0.5f);
         glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
         DrawGrid(engine.shaderProgram, gridVAO, vertices.size());
     }
     void DrawGrid(GLuint shaderProgram, GLuint gridVAO, size_t vertexCount) {
         glUseProgram(shaderProgram);
-        glm::mat4 model = glm::mat4(1.0f); // Identity matrix for the grid
+        glm::mat4 model = glm::mat4(1.0f);
         GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
@@ -576,7 +331,7 @@ struct Grid {
         float halfSize = size / 2.0f;
 
         // amount to extend the central X-axis line (in same units as size)
-        float extra = step * 3.0f; // adjust this factor to make the line stick out more/less
+        float extra = step * 3.0f;
         int midZ = divisions / 2;
 
         // x axis
@@ -588,13 +343,12 @@ struct Grid {
                     float xStart = -halfSize + xStep * step;
                     float xEnd = xStart + step;
 
-                    // If this is the central line (middle z), extend the very first and last segment
                     if (zStep == midZ) {
                         if (xStep == 0) {
-                            xStart -= extra; // extend left end
+                            xStart -= extra;
                         }
                         if (xStep == divisions - 1) {
-                            xEnd += extra;   // extend right end
+                            xEnd += extra;
                         }
                     }
 
@@ -603,7 +357,7 @@ struct Grid {
                 }
             }
         }
-        // zaxis
+        // z axis
         for (int xStep = 0; xStep <= divisions; ++xStep) {
             float x = -halfSize + xStep * step;
             for (int yStep = 3; yStep <= 3; ++yStep) {
@@ -618,25 +372,36 @@ struct Grid {
         }
 
         return vertices;
-
     }
 };
-Grid grid;
 
 // ================= Main Loop ================= //
 int main () {
+    // All state is local to main — no file-scope globals
+    AppState app;
+    app.sim.n = 2;
+    app.sim.l = 1;
+    app.sim.m = 0;
+    app.sim.particle_count = 250000;
+    app.electron_r = float(app.sim.n) / 3.0f;
+
+    Engine engine;
+
+    WindowState ws;
+    ws.app = &app;
+
+    Grid grid;
+    grid.init(engine);
+
     GLint modelLoc = glGetUniformLocation(engine.shaderProgram, "model");
     GLint objectColorLoc = glGetUniformLocation(engine.shaderProgram, "objectColor");
     glUseProgram(engine.shaderProgram);
-    engine.setupCameraCallbacks();
-
-    // --- Quantum numbers setup (using globals) ---
-    electron_r = float(n) / 3.0f;
+    engine.setupCallbacks(&ws);
 
     // --- Sample particles ---
-    generateParticles(250000);
+    generateParticles(app);
 
-    // Inside main(), before the while loop:
+    // Material setup
     GLfloat spec[] = { 1.0f, 1.0f, 1.0f, 1.0f };
     GLfloat shininess[] = { 50.0f };
     glMaterialfv(GL_FRONT, GL_SPECULAR, spec);
@@ -645,27 +410,28 @@ int main () {
     float dt = 0.5f;
     cout << "Starting simulation..." << endl;
     while (!glfwWindowShouldClose(engine.window)) {
-        grid.Draw(objectColorLoc);
+        grid.Draw(engine);
 
-        // ------ Draw Particles ------
-        for (Particle& p : particles) {
+        // ------ Update & Draw Particles ------
+        for (Particle& p : app.particles) {
             double r = length(p.pos);
             if (r > 1e-6) {
                 double theta = acos(p.pos.y / r);
-                p.vel = calculateProbabilityFlow(p, n, l, m);
+                orbital::Vec3 flow = orbital::probability_flow(p.pos.x, p.pos.y, p.pos.z, app.sim.m);
+                p.vel = vec3(flow.x, flow.y, flow.z);
                 vec3 temp_pos = p.pos + p.vel * dt;
                 double new_phi = atan2(temp_pos.z, temp_pos.x);
-                p.pos = engine.sphericalToCartesian(r, theta, new_phi);
+                p.pos = toGlmVec3(orbital::spherical_to_cartesian(
+                    static_cast<float>(r), static_cast<float>(theta), static_cast<float>(new_phi)));
             }
         }
-        engine.drawSpheres(particles);
+        engine.drawSpheres(ws.camera, app.particles, app.electron_r);
 
         glfwSwapBuffers(engine.window);
         glfwPollEvents();
     }
 
     // --- Cleanup ---
-    
     glfwDestroyWindow(engine.window);
     glfwTerminate();
     return 0;

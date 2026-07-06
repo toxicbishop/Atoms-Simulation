@@ -8,7 +8,8 @@ find_package(GLEW REQUIRED)
 find_package(glm CONFIG REQUIRED)
 
 # Set common compile options and include directories
-add_compile_options(-std=c++17)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Set output directory to bin/ so launcher works out-of-the-box
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
@@ -33,3 +34,11 @@ add_atom_executable(wave_atom_2d src/wave_atom_2d.cpp)
 
 # Create the launcher executable (doesn't need OpenGL/GLFW, just standard C++)
 add_executable(launcher src/launcher.cpp)
+
+# GCC < 9 requires explicit linking of stdc++fs for std::filesystem
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9")
+    target_link_libraries(launcher PRIVATE stdc++fs)
+endif()
+
+# ── Tests (pure math, no OpenGL dependencies) ──────────────────────────
+add_executable(test_orbital_math tests/test_orbital_math.cpp)
