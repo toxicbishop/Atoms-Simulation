@@ -14,17 +14,25 @@ static std::string build_command(const std::string& base_name) {
     exe_name += ".exe";
 #endif
 
-    // Check possible locations: bin/Release/ (MSVC), bin/ (GCC/Clang), or current dir
+    // Check possible locations: same dir (MSI install), bin/Release/ (MSVC dev), or bin/ (GCC/Clang dev)
+    fs::path p_msi = fs::current_path() / exe_name;
     fs::path p1 = fs::current_path() / "bin" / "Release" / exe_name;
     fs::path p2 = fs::current_path() / "bin" / exe_name;
     
-    fs::path target = p1;
-    if (!fs::exists(p1) && fs::exists(p2)) {
-        target = p2;
+    fs::path target = p_msi; // Default to same directory
+    if (!fs::exists(p_msi)) {
+        if (fs::exists(p1)) target = p1;
+        else if (fs::exists(p2)) target = p2;
     }
 
-    // Quote the path to handle directories with spaces
-    return "\"" + target.generic_string() + "\"";
+    // On Windows, system() uses cmd.exe which has bizarre quote stripping rules.
+    // Wrapping the entire command in an extra set of quotes fixes paths with spaces.
+    std::string cmd = "\"" + target.string() + "\"";
+#ifdef _WIN32
+    return "\"" + cmd + "\"";
+#else
+    return cmd;
+#endif
 }
 
 /// Launch a child process by base executable name.
