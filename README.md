@@ -4,13 +4,13 @@ An interactive simulation of hydrogen atom electron orbitals, built from first-p
 
 ## Demos
 
-![Realtime 3D orbital point-cloud rotating through various quantum states](media/realtime_3d.gif)
+<div align="center">
 
-![2D Bohr model showing fixed-radius circular electron orbits](media/2d_bohr.gif)
+| Realtime 3D Model | 2D Bohr Model | Atom Excitation | GPU Raytracer |
+| :---: | :---: | :---: | :---: |
+| <img src="media/realtime_3d.gif" width="600" alt="Realtime 3D Model"> | <img src="media/2d_bohr.gif" width="600" alt="2D Bohr Model"> | <img src="media/excitation.gif" width="600" alt="Atom Excitation Model"> | <img src="media/raytracer.gif" width="600" alt="GPU Raytracer"> |
 
-![Electron absorbing photon energy and jumping between energy levels](media/excitation.gif)
-
-![GPU raytracer rendering each sample point as a lit sphere](media/raytracer.gif)
+</div>
 
 ## The Physics
 
