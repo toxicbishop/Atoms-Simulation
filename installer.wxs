@@ -1,0 +1,45 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Atoms Simulation" Manufacturer="toxicbishop" Version="1.0.0.0" UpgradeCode="abdd24a1-df7e-495b-a964-c52d999aaade">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Atoms Simulation is already installed." />
+    
+    <Feature Id="Main">
+      <ComponentGroupRef Id="AppComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <!-- Define the install directory: Program Files / Atoms Simulation -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Atoms Simulation" />
+    </StandardDirectory>
+
+    <!-- Define the start menu directory -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramsFolder" Name="Atoms Simulation" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <Component>
+        <File Source="bin\Release\launcher.exe">
+          <Shortcut Id="AppShortcut" Directory="AppProgramsFolder" Name="Atoms Simulation" WorkingDirectory="INSTALLFOLDER" Advertise="yes" />
+        </File>
+      </Component>
+      
+      <!-- Start menu directory cleanup -->
+      <Component Directory="AppProgramsFolder">
+        <RemoveFolder Id="CleanUpShortCut" On="uninstall"/>
+        <RegistryValue Root="HKCU" Key="Software\toxicbishop\AtomsSimulation" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
+      </Component>
+
+      <Component><File Source="bin\Release\atom.exe" /></Component>
+      <Component><File Source="bin\Release\atom_excitation.exe" /></Component>
+      <Component><File Source="bin\Release\atom_raytracer.exe" /></Component>
+      <Component><File Source="bin\Release\atom_realtime.exe" /></Component>
+      <Component><File Source="bin\Release\wave_atom_2d.exe" /></Component>
+      <Component><File Source="bin\Release\glew32.dll" /></Component>
+      <Component><File Source="bin\Release\glfw3.dll" /></Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
